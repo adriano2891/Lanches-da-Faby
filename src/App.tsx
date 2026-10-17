@@ -15,6 +15,8 @@ import { StoreInfoFooter } from './components/StoreInfoFooter.tsx';
 import { AdminPanel } from './components/admin/AdminPanel.tsx';
 import { SearchX } from 'lucide-react';
 
+import { fetchMenuDataWithFallback } from './utils/menuStorage.ts';
+
 const LOCAL_STORAGE_CART_KEY = 'faby_cart_items_v1';
 
 export default function App() {
@@ -62,19 +64,18 @@ export default function App() {
     }
   }, [cartItems]);
 
-  // Fetch full menu from server
+  // Fetch full menu from server with automatic Netlify/offline fallback
   const fetchMenuData = useCallback(async () => {
     try {
-      const res = await fetch('/api/menu');
-      if (!res.ok) throw new Error('Falha ao carregar o cardápio');
-      const data = await res.json();
+      const data = await fetchMenuDataWithFallback();
       setConfig(data.config);
       setProducts(data.products || []);
       setAdditionals(data.additionals || []);
       setStoreStatus(data.storeStatus);
       setDataError(null);
     } catch (err: any) {
-      setDataError(err.message || 'Erro ao comunicar com o servidor');
+      console.error('Error fetching menu:', err);
+      setDataError(err.message || 'Erro ao carregar o cardápio');
     } finally {
       setIsLoading(false);
     }
@@ -111,25 +112,39 @@ export default function App() {
     return counts;
   }, [products]);
 
-  // Filtered products list
+  // Filtered products list with active accent-insensitive and multi-field search
   const filteredProducts = useMemo(() => {
+    const normalize = (text?: string) =>
+      text
+        ? text
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim()
+        : '';
+
+    const hasSearch = searchTerm.trim() !== '';
+    const query = normalize(searchTerm.trim());
+
     return products.filter((product) => {
-      // 1. Category filter
-      if (selectedCategory !== 'todos' && product.categoryId !== selectedCategory) {
-        return false;
+      // 1. Search term filter (nome, descrição, ingredientes, sabor, categoria)
+      if (hasSearch) {
+        const matchesName = normalize(product.name).includes(query);
+        const matchesDescription = normalize(product.description).includes(query);
+        const matchesIngredients = product.ingredients?.some((ing) =>
+          normalize(ing).includes(query)
+        );
+        const matchesFlavor = normalize(product.drinkDetails?.flavor).includes(query);
+        const matchesCategory = normalize(product.categoryId).includes(query);
+
+        if (!matchesName && !matchesDescription && !matchesIngredients && !matchesFlavor && !matchesCategory) {
+          return false;
+        }
       }
 
-      // 2. Search term filter (by name or ingredient)
-      if (searchTerm.trim() !== '') {
-        const query = searchTerm.trim().toLowerCase();
-        const matchesName = product.name.toLowerCase().includes(query);
-        const matchesDescription = product.description.toLowerCase().includes(query);
-        const matchesIngredients = product.ingredients?.some((ing) =>
-          ing.toLowerCase().includes(query)
-        );
-        const matchesFlavor = product.drinkDetails?.flavor?.toLowerCase().includes(query);
-
-        return matchesName || matchesDescription || matchesIngredients || matchesFlavor;
+      // 2. Category filter
+      if (selectedCategory !== 'todos' && product.categoryId !== selectedCategory) {
+        return false;
       }
 
       return true;
@@ -253,7 +268,12 @@ export default function App() {
       {/* 3. CAMPO DE BUSCA */}
       <SearchBar
         searchTerm={searchTerm}
-        onSearchChange={setSearchTerm}
+        onSearchChange={(val) => {
+          setSearchTerm(val);
+          if (val.trim() !== '' && selectedCategory !== 'todos') {
+            setSelectedCategory('todos');
+          }
+        }}
         resultCount={filteredProducts.length}
         totalProductsCount={products.length}
       />

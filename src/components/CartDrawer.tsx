@@ -299,7 +299,8 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
         body: JSON.stringify({ items }),
       });
 
-      if (res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
         const data = await res.json();
         if (!data.valid && data.changes && data.changes.length > 0) {
           setValidationChanges(data.changes);
